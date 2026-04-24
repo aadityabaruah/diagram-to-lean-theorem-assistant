@@ -1,3 +1,9 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
+.venv/
+.env
+.DS_Store
+lean_project/.lake/
+lean_project/lake-packages/
+lean_project/build/
