@@ -7,3 +7,4 @@ __pycache__/
 lean_project/.lake/
 lean_project/lake-packages/
 lean_project/build/
+examples/images/geometry3k/
