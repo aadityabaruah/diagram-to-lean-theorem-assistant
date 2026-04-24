@@ -42,8 +42,3 @@ def _lean_identifier(name: str) -> str:
 
 def _flatten(text: str) -> str:
     return text.replace("\n", " ").replace("\r", " ").strip()
-
-
-# Temporary compatibility shim (removed in Task 12 when demo.py is rewritten)
-def theorem_skeleton(name: str, assumptions: list[str], goal: str) -> str:
-    return theorem_from(name=name, assumptions=assumptions, goal=goal)
