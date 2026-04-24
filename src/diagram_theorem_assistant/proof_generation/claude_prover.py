@@ -46,24 +46,39 @@ def _default_model() -> str:
     return os.environ.get("CLAUDE_PROVER_MODEL", "claude-opus-4-7")
 
 
-INITIAL_PROMPT = """You are a Lean 4 + mathlib4 theorem-proving assistant.
+INITIAL_PROMPT = """You are a Lean 4 + mathlib4 theorem-proving expert.
 
-The file below contains a theorem whose proof is `sorry`. Replace `sorry`
-with a correct Lean 4 proof that closes the goal. Use mathlib tactics and
-lemmas.
+The file below contains a theorem whose proof is `sorry`. Write a complete,
+correct proof. The file will be compiled against mathlib (version ~v4.15).
 
-Rules:
-1. Return ONLY the complete file source — no markdown, no commentary, no
-   preamble. Your entire response must be valid Lean 4 source.
+Output rules:
+1. Return ONLY the complete file source. No markdown fences, no `<think>`
+   blocks, no commentary. The entire response must be valid Lean 4 source.
 2. Preserve all imports, namespace declarations, open statements, comments,
-   theorem signatures, and hypothesis bindings exactly as given.
-3. Replace only the tactic block after `:= by`. You may use multiple lines.
-4. Common useful tactics: `exact`, `apply`, `rw`, `simp`, `simp_all`,
-   `linarith`, `nlinarith`, `polyrith`, `ring`, `field_simp`, `positivity`,
-   `norm_num`, `decide`. For geometry: look up lemmas in
-   `Mathlib.Geometry.Euclidean.*` and `Mathlib.Analysis.InnerProductSpace.*`.
-5. If you genuinely cannot close the goal, leave `sorry` — do not fabricate
-   a fake proof.
+   theorem signatures, and hypothesis bindings EXACTLY as given.
+3. Replace only the tactic block after `:= by` — you may use multiple lines.
+4. If you truly cannot find a proof, leave `sorry`. Never fabricate a proof
+   that references lemmas you are not sure exist.
+
+Proof strategy hints:
+- Start with `simp_all`, `linarith`, `nlinarith`, `polyrith`, `ring`,
+  `field_simp`, `norm_num`, `positivity` — these handle many algebraic goals.
+- For equalities involving real numbers derived from `dist`, expand via
+  `dist_eq_norm_sub` and use the inner-product-space machinery.
+- For geometry: relevant lemmas live in `Mathlib.Geometry.Euclidean.Angle.*`,
+  `Mathlib.Geometry.Euclidean.Triangle`, `Mathlib.Analysis.InnerProductSpace.*`.
+  Named lemmas you can try:
+    * `EuclideanGeometry.angle_comm`, `angle_eq_zero_iff`
+    * `EuclideanGeometry.dist_eq_norm_vsub`
+    * `EuclideanGeometry.law_cos`
+    * `InnerProductGeometry.angle_eq_iff`
+    * `InnerProductGeometry.cos_angle`
+- For the isosceles base-angles theorem, the law of cosines plus algebraic
+  manipulation should give equality of `Real.cos` applied to the two angles,
+  and then `Real.arccos` injectivity on [-1, 1] closes it.
+- For Pythagoras with right angle at C: the fact `∠ A C B = π/2` implies
+  `⟪A -ᵥ C, B -ᵥ C⟫ = 0`; combine with `dist_sq_eq_inner_sub_sq` or the
+  parallelogram identity.
 
 Lean file:
 
