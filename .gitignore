@@ -9,3 +9,7 @@ lean_project/lake-packages/
 lean_project/build/
 examples/images/geometry3k/
 lean_project/DiagramTheorems/Generated.lean
+*.egg-info/
+Check*.pdf
+comments.txt
+machine_assisted_mathematics_proposal*.pdf

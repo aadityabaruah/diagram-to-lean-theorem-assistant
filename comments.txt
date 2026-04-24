@@ -1,8 +1,0 @@
-This is an interesting project idea. Below I have noted some concerns to be addressed:
-
-In your example, you do not include what the [goal] is. How does your system determine what the goal theorem statement to prove is? You somehow need the system to decide both what assumptions are being made as well as what goal is trying to be proven. 
-
-How will you determine if your system is correctly figuring out the "right" theorem? Will you have examples with correct theorems? How will your system avoid the difficulty you mention of knowing which assumptions are intended in the diagram?
-
-Natalie Parham , Apr 9 at 4:55pm
-I like this project. How does this compare with the Lean blueprint? I am interested in both a working piece of software and further ideas about how the visualizer could work.

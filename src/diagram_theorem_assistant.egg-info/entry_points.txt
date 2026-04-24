@@ -1,2 +1,0 @@
-[console_scripts]
-diagram-theorem-demo = diagram_theorem_assistant.demo:main
