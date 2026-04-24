@@ -1,0 +1,57 @@
+[
+  {
+    "id": "isosceles_triangle_base_angles",
+    "image": "examples/images/isosceles_triangle.png",
+    "problem_text": "In triangle ABC, AB = AC. Prove angle ABC = angle BCA.",
+    "objects": ["point A", "point B", "point C", "segment AB", "segment AC", "segment BC"],
+    "diagram_marks": [{"type": "equal_length", "segments": ["AB", "AC"]}],
+    "gold_assumptions": ["triangle A B C", "AB = AC"],
+    "gold_goal": "angle ABC = angle BCA",
+    "acceptable_goals": ["angle CBA = angle BCA"],
+    "lean_theorem_name": "isosceles_base_angles"
+  },
+  {
+    "id": "parallel_lines_alternate_interior",
+    "image": "examples/images/parallel_lines.png",
+    "problem_text": "Lines l and m are parallel and cut by transversal t. Prove angle 1 equals angle 2.",
+    "objects": ["line l", "line m", "line t", "angle 1", "angle 2"],
+    "diagram_marks": [{"type": "parallel", "lines": ["l", "m"]}],
+    "gold_assumptions": ["parallel l m", "transversal t l m"],
+    "gold_goal": "angle 1 = angle 2",
+    "acceptable_goals": ["alternate interior angles are equal"],
+    "lean_theorem_name": "alternate_interior_angles"
+  },
+  {
+    "id": "ambiguous_triangle_no_text",
+    "image": "examples/images/ambiguous_triangle.png",
+    "problem_text": "",
+    "objects": ["point A", "point B", "point C", "segment AB", "segment AC", "segment BC"],
+    "diagram_marks": [],
+    "gold_assumptions": ["triangle A B C"],
+    "gold_goal": "unknown without user selection",
+    "acceptable_goals": ["AB = AC", "angle ABC = angle BCA", "area ABC > 0"],
+    "lean_theorem_name": "ambiguous_triangle_user_selected_goal"
+  },
+  {
+    "id": "right_triangle_pythagorean",
+    "image": "examples/images/right_triangle.png",
+    "problem_text": "Triangle ABC has a right angle at C. Prove AB^2 = AC^2 + BC^2.",
+    "objects": ["point A", "point B", "point C", "segment AB", "segment AC", "segment BC", "right angle C"],
+    "diagram_marks": [{"type": "right_angle", "points": ["A", "C", "B"]}],
+    "gold_assumptions": ["triangle A B C", "right_angle A C B"],
+    "gold_goal": "AB^2 = AC^2 + BC^2",
+    "acceptable_goals": ["pythagorean theorem for triangle ABC"],
+    "lean_theorem_name": "right_triangle_pythagorean"
+  },
+  {
+    "id": "perpendicular_bisector_equidistant",
+    "image": "examples/images/perpendicular_bisector.png",
+    "problem_text": "Point P lies on the perpendicular bisector of AB. Prove PA = PB.",
+    "objects": ["point A", "point B", "point P", "line l", "segment AB", "segment PA", "segment PB"],
+    "diagram_marks": [{"type": "perpendicular_bisector", "point": "P", "segment": "AB"}],
+    "gold_assumptions": ["P on perpendicular_bisector AB"],
+    "gold_goal": "PA = PB",
+    "acceptable_goals": ["distance P A = distance P B"],
+    "lean_theorem_name": "perpendicular_bisector_equidistant"
+  }
+]
