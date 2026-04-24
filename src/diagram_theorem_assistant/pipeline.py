@@ -24,6 +24,7 @@ from pathlib import Path
 from diagram_theorem_assistant.assumption_extraction import infer_assumptions
 from diagram_theorem_assistant.consensus.judge import JudgeLLM
 from diagram_theorem_assistant.extraction.base import AssumptionExtractor, Extraction
+from diagram_theorem_assistant.proof_generation.claude_prover import ClaudeProver
 from diagram_theorem_assistant.goal_generation import extract_goal_from_text, rank_goal_candidates
 from diagram_theorem_assistant.lean_export import theorem_from
 from diagram_theorem_assistant.lean_runner import LeanRunner
@@ -121,6 +122,8 @@ def run_consensus_pipeline(
     theorem_name: str = "generated_theorem",
     max_retries: int = 3,
     vlm_fixture_path: Path | None = None,
+    prover: ClaudeProver | None = None,
+    prover_max_attempts: int = 3,
 ) -> PipelineResult:
     """Run the pipeline with dual-provider consensus and judge-mediated retry.
 
@@ -184,6 +187,16 @@ def run_consensus_pipeline(
 
     assert reading is not None
     assert extraction is not None
+
+    # Optional: attempt to replace `sorry` with a real proof via an LLM prover.
+    # This runs after the statement-level pipeline is already green (or as a
+    # last-ditch attempt on a TYPE_ERROR state). The prover uses lean_runner
+    # as the oracle, so any proof it returns was actually verified.
+    if prover is not None and lean_runner is not None and "sorry" in lean_source:
+        lean_source, status, stderr = prover.prove(
+            lean_source, lean_runner=lean_runner, max_attempts=prover_max_attempts
+        )
+
     return PipelineResult(
         reading=reading,
         candidate_assumptions=list(extraction.assumptions),

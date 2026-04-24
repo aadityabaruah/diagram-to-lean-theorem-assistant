@@ -24,6 +24,7 @@ from diagram_theorem_assistant.pipeline import (
     run_consensus_pipeline,
     run_pipeline_from_reading,
 )
+from diagram_theorem_assistant.proof_generation.claude_prover import ClaudeProver
 from diagram_theorem_assistant.lean_runner import LeanRunner
 from diagram_theorem_assistant.schema import LeanStatus, load_benchmark
 from diagram_theorem_assistant.vlm.base import FixtureNotFoundError, VLMError
@@ -133,10 +134,22 @@ def interactive_page() -> None:
             index=0,
         )
         max_retries = st.sidebar.slider("Max retries on Lean failure", 0, 5, 3)
+        attempt_proof = st.sidebar.checkbox(
+            "Attempt LLM-generated proof (experimental)",
+            value=False,
+            help="After generating the theorem statement, ask Claude to replace `sorry` with a real proof, iterating lake-build errors. Only closes trivial cases today — mathlib geometry automation is an open problem.",
+        )
+        prover_max_attempts = (
+            st.sidebar.slider("Prover max attempts", 1, 6, 3)
+            if attempt_proof
+            else 0
+        )
     else:
         claude_model = "claude-opus-4-7"
         judge_model = "gemini-3.1-pro-preview"
         max_retries = 0
+        attempt_proof = False
+        prover_max_attempts = 0
 
     st.subheader("Problem text")
     problem_text = st.text_area("Optional problem statement", value=example.problem_text, height=80)
@@ -174,6 +187,11 @@ def interactive_page() -> None:
                     claude_ext = ClaudeExtractor(api_key=anthropic_key, model=claude_model)
                     extractor = ConsensusExtractor(gemini_ext, claude_ext, judge, max_attempts=3)
 
+                    prover = (
+                        ClaudeProver(api_key=anthropic_key, model=claude_model)
+                        if attempt_proof
+                        else None
+                    )
                     result = run_consensus_pipeline(
                         image_path=image_path,
                         problem_text=problem_text,
@@ -183,6 +201,8 @@ def interactive_page() -> None:
                         lean_runner=_lean_runner(),
                         theorem_name=example.lean_theorem_name,
                         max_retries=max_retries,
+                        prover=prover,
+                        prover_max_attempts=prover_max_attempts,
                     )
                 except (VLMError, FixtureNotFoundError) as exc:
                     st.error(str(exc))
