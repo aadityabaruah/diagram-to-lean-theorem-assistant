@@ -6,6 +6,12 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
+from diagram_theorem_assistant.consensus.judge import JudgeLLM
+from diagram_theorem_assistant.consensus.vlm_consensus import ConsensusVLMAdapter
+from diagram_theorem_assistant.extraction.base import Extraction
+from diagram_theorem_assistant.extraction.claude_extractor import ClaudeExtractor
+from diagram_theorem_assistant.extraction.consensus import ConsensusExtractor
+from diagram_theorem_assistant.extraction.gemini_extractor import GeminiExtractor
 from diagram_theorem_assistant.metrics import (
     assumption_precision,
     assumption_recall,
@@ -15,11 +21,13 @@ from diagram_theorem_assistant.metrics import (
 )
 from diagram_theorem_assistant.pipeline import (
     candidate_assumptions,
+    run_consensus_pipeline,
     run_pipeline_from_reading,
 )
 from diagram_theorem_assistant.lean_runner import LeanRunner
 from diagram_theorem_assistant.schema import LeanStatus, load_benchmark
 from diagram_theorem_assistant.vlm.base import FixtureNotFoundError, VLMError
+from diagram_theorem_assistant.vlm.claude import ClaudeAdapter
 from diagram_theorem_assistant.vlm.fixture import FixtureAdapter
 from diagram_theorem_assistant.vlm.gemini import GeminiAdapter
 
@@ -39,12 +47,21 @@ def _lean_runner() -> LeanRunner | None:
     return LeanRunner(project_root=LEAN_PROJECT, generated_path=GENERATED_LEAN)
 
 
-def _adapter(mode: str, api_key: str):
+GEMINI_MODEL_CHOICES = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "Custom…",
+]
+
+
+def _adapter(mode: str, api_key: str, model: str):
     if mode == "Gemini (live)":
         if not api_key:
             st.error("GEMINI_API_KEY missing. Set it in .env.")
             st.stop()
-        return GeminiAdapter(api_key=api_key)
+        return GeminiAdapter(api_key=api_key, model=model)
     return FixtureAdapter(FIXTURES_DIR)
 
 
@@ -77,12 +94,56 @@ def interactive_page() -> None:
     )
     st.sidebar.caption(f"API key set: {bool(api_key)}")
 
+    default_model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+    default_index = (
+        GEMINI_MODEL_CHOICES.index(default_model)
+        if default_model in GEMINI_MODEL_CHOICES
+        else len(GEMINI_MODEL_CHOICES) - 1  # Custom…
+    )
+    chosen = st.sidebar.selectbox(
+        "Gemini model",
+        options=GEMINI_MODEL_CHOICES,
+        index=default_index,
+        disabled=(mode != "Gemini (live)"),
+        help="flash-lite = cheapest; pro = best accuracy on hand-drawn / real diagrams.",
+    )
+    if chosen == "Custom…":
+        model = st.sidebar.text_input("Custom model name", value=default_model)
+    else:
+        model = chosen
+
+    st.sidebar.divider()
+    st.sidebar.subheader("Consensus mode (experimental)")
+
+    consensus_enabled = st.sidebar.checkbox(
+        "Enable dual-provider consensus",
+        value=False,
+        help="Run Gemini + Claude at each stage, judge LLM arbitrates. Requires both API keys.",
+    )
+
+    if consensus_enabled:
+        claude_model = st.sidebar.selectbox(
+            "Claude model",
+            options=["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+            index=0,
+        )
+        judge_model = st.sidebar.selectbox(
+            "Judge model",
+            options=["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview"],
+            index=0,
+        )
+        max_retries = st.sidebar.slider("Max retries on Lean failure", 0, 5, 3)
+    else:
+        claude_model = "claude-opus-4-7"
+        judge_model = "gemini-3.1-pro-preview"
+        max_retries = 0
+
     st.subheader("Problem text")
     problem_text = st.text_area("Optional problem statement", value=example.problem_text, height=80)
 
     if st.button("Run VLM extraction"):
         try:
-            adapter = _adapter(mode, api_key)
+            adapter = _adapter(mode, api_key, model)
             fixture_path = REPO_ROOT / example.vlm_fixture if example.vlm_fixture else None
             reading = adapter.read(image_path, fixture_path=fixture_path)
         except (VLMError, FixtureNotFoundError) as exc:
@@ -91,12 +152,70 @@ def interactive_page() -> None:
         st.session_state["reading"] = reading
         st.session_state["problem_text"] = problem_text
         st.session_state["example"] = example
+        st.session_state["vlm_mode"] = mode
+        st.session_state["vlm_model"] = model if mode == "Gemini (live)" else "(fixture)"
+
+    if consensus_enabled:
+        if st.button("Run consensus pipeline (end-to-end)"):
+            gemini_key = os.environ.get("GEMINI_API_KEY", "")
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not gemini_key or not anthropic_key:
+                st.error("Consensus mode requires both GEMINI_API_KEY and ANTHROPIC_API_KEY in .env")
+                st.stop()
+
+            with st.spinner("Running consensus pipeline — this may take 30-90 seconds..."):
+                try:
+                    gemini_vlm = GeminiAdapter(api_key=gemini_key, model=model)
+                    claude_vlm = ClaudeAdapter(api_key=anthropic_key, model=claude_model)
+                    judge = JudgeLLM(api_key=gemini_key, model=judge_model)
+                    vlm = ConsensusVLMAdapter(gemini_vlm, claude_vlm, judge, max_attempts=3)
+
+                    gemini_ext = GeminiExtractor(api_key=gemini_key, model=model)
+                    claude_ext = ClaudeExtractor(api_key=anthropic_key, model=claude_model)
+                    extractor = ConsensusExtractor(gemini_ext, claude_ext, judge, max_attempts=3)
+
+                    result = run_consensus_pipeline(
+                        image_path=image_path,
+                        problem_text=problem_text,
+                        vlm=vlm,
+                        extractor=extractor,
+                        judge=judge,
+                        lean_runner=_lean_runner(),
+                        theorem_name=example.lean_theorem_name,
+                        max_retries=max_retries,
+                    )
+                except (VLMError, FixtureNotFoundError) as exc:
+                    st.error(str(exc))
+                    st.stop()
+
+            st.subheader("Consensus VLM reading")
+            st.caption(f"Gemini: `{model}`  |  Claude: `{claude_model}`  |  Judge: `{judge_model}`")
+            st.json(result.reading.to_dict())
+
+            st.subheader("Consensus extraction")
+            st.write("**Assumptions:**")
+            for a in result.confirmed_assumptions:
+                st.markdown(f"- `{a}`")
+            st.write(f"**Goal:** `{result.selected_goal}`")
+
+            st.subheader("Lean output")
+            st.markdown(_status_badge(result.lean_status))
+            if result.lean_status in (LeanStatus.TYPE_ERROR, LeanStatus.TIMEOUT) and result.lean_stderr:
+                st.code(result.lean_stderr, language="text")
+            st.code(result.lean_source, language="lean")
+            st.download_button(
+                "Download .lean",
+                data=result.lean_source,
+                file_name=f"{example.lean_theorem_name}.lean",
+            )
 
     reading = st.session_state.get("reading")
     if reading is None:
         return
 
     st.subheader("VLM reading")
+    if st.session_state.get("vlm_model"):
+        st.caption(f"Source: {st.session_state['vlm_model']}")
     st.json(reading.to_dict())
 
     candidate = candidate_assumptions(reading, st.session_state.get("problem_text", ""))
