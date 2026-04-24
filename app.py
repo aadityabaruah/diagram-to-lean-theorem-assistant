@@ -324,7 +324,11 @@ def benchmark_page() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Diagram-to-Lean Theorem Assistant", layout="wide")
+    st.set_page_config(
+        page_title="Diagram-to-Lean Theorem Assistant",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     page = st.sidebar.selectbox("Page", ["Interactive", "Benchmark"])
     if page == "Interactive":
         interactive_page()
