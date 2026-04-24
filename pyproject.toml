@@ -30,6 +30,7 @@ diagram-theorem-demo = "diagram_theorem_assistant.demo:main"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not lean and not live'"
 markers = [
   "lean: tests that shell out to a real `lake build` (slow, require Lean + mathlib cached)",
   "live: tests that call the live Gemini API (cost money, require GEMINI_API_KEY)",
