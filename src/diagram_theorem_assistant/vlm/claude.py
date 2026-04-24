@@ -36,7 +36,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 def _default_model() -> str:
-    return os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+    return os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
 
 
 class ClaudeAdapter:
