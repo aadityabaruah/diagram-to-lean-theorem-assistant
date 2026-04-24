@@ -51,16 +51,23 @@ def test_theorem_from_perpendicular_bisector_introduces_midpoint():
     assert "dist P A = dist P B" in source
 
 
-def test_theorem_from_angle_var_goal_uses_real_variables():
+def test_theorem_from_angle_var_goal_falls_back_honestly():
+    """'angle 1 = angle 2' cannot be honestly formalized without line algebra
+    mathlib doesn't expose cleanly, so we fall back to the comment-style
+    skeleton rather than binding the goal as a hypothesis (which would be
+    circular)."""
     source = theorem_from(
         name="altint",
         assumptions=["parallel l m", "transversal t l m"],
         goal="angle 1 = angle 2",
     )
-    assert "(a1 a2 : ℝ)" in source
-    assert "a1 = a2" in source
-    # This case is provable via exact — no sorry
-    assert "exact h_parallel_transversal" in source
+    # No circular hypothesis
+    assert "h_parallel_transversal" not in source
+    assert "exact h_parallel_transversal" not in source
+    # Falls back to True + sorry with the original strings as comments
+    assert "theorem altint : True" in source
+    assert "sorry" in source
+    assert "-- goal: angle 1 = angle 2" in source
 
 
 def test_theorem_from_preserves_raw_assumption_comments():

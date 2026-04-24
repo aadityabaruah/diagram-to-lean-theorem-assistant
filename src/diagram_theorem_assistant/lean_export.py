@@ -115,13 +115,13 @@ def _parse_goal(raw: str) -> _Goal:
             points=(a, b, c, d, e, f),
         )
 
-    if m := _ANGLE_VAR_RE.match(raw):
-        a, b = m.groups()
-        return _Goal(
-            kind="angle_var_eq",
-            lean_term=f"a{a} = a{b}",
-            points=(a, b),
-        )
+    if _ANGLE_VAR_RE.match(raw):
+        # "angle 1 = angle 2" form — parallel/transversal theorems. We have no
+        # clean way to emit a correct geometric formalization without a line
+        # algebra that mathlib doesn't expose cleanly, so fall back to the
+        # comment-style skeleton rather than binding `a1 = a2` as a hypothesis
+        # (which would make the proof circular).
+        return _Goal(kind="unknown", lean_term="")
 
     if m := _PYTHAG_RE.match(raw):
         a, b, c, d, e, f = m.groups()
@@ -166,10 +166,6 @@ def _emit_real(
         if len(p) == 1 and p.isalpha() and p.isupper() and p not in seen:
             seen.add(p)
             points.append(p)
-
-    # angle_var_eq uses real variables a1, a2 (not points)
-    if goal.kind == "angle_var_eq":
-        return _emit_angle_var_theorem(identifier, goal, raw_assumptions, raw_goal)
 
     if not points:
         # Nothing to bind; fall back to comment style so the file still compiles.
@@ -227,38 +223,6 @@ def _emit_real(
         f"{binder_block} :\n"
         f"    {goal.lean_term} := by\n"
         f"{body}\n"
-        "\n"
-        "end DiagramTheorems.Generated\n"
-    )
-
-
-def _emit_angle_var_theorem(
-    identifier: str,
-    goal: _Goal,
-    raw_assumptions: list[str],
-    raw_goal: str,
-) -> str:
-    """For goals like 'angle 1 = angle 2' we introduce real-valued variables.
-
-    Since we can't derive the equality from parallel/transversal structure
-    at the string level, we bind the equality itself as a hypothesis and
-    close the proof with ``exact``.
-    """
-    a, b = goal.points
-    raw_comment_lines = "\n".join(f"-- assumption: {_flatten(x)}" for x in raw_assumptions)
-    raw_goal_comment = f"-- goal: {_flatten(raw_goal)}"
-    return (
-        "import DiagramTheorems.Basic\n"
-        "\n"
-        "namespace DiagramTheorems.Generated\n"
-        "\n"
-        f"{raw_comment_lines}\n"
-        f"{raw_goal_comment}\n"
-        f"theorem {identifier}\n"
-        f"    (a{a} a{b} : ℝ)\n"
-        f"    (h_parallel_transversal : a{a} = a{b}) :\n"
-        f"    a{a} = a{b} := by\n"
-        f"  exact h_parallel_transversal\n"
         "\n"
         "end DiagramTheorems.Generated\n"
     )
