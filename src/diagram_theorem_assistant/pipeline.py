@@ -22,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from diagram_theorem_assistant.assumption_extraction import infer_assumptions
+from diagram_theorem_assistant.consensus.judge import JudgeLLM
+from diagram_theorem_assistant.extraction.base import AssumptionExtractor, Extraction
 from diagram_theorem_assistant.goal_generation import extract_goal_from_text, rank_goal_candidates
 from diagram_theorem_assistant.lean_export import theorem_from
 from diagram_theorem_assistant.lean_runner import LeanRunner
@@ -105,4 +107,90 @@ def run_pipeline(
         confirmed_assumptions=confirmed_assumptions,
         lean_runner=lean_runner,
         theorem_name=theorem_name,
+    )
+
+
+def run_consensus_pipeline(
+    *,
+    image_path: Path,
+    problem_text: str,
+    vlm: DiagramUnderstander,
+    extractor: AssumptionExtractor,
+    judge: JudgeLLM | None = None,
+    lean_runner: LeanRunner | None = None,
+    theorem_name: str = "generated_theorem",
+    max_retries: int = 3,
+    vlm_fixture_path: Path | None = None,
+) -> PipelineResult:
+    """Run the pipeline with dual-provider consensus and judge-mediated retry.
+
+    On Lean type-error, the judge attributes blame to vlm/extraction/emission
+    and the pipeline re-runs only the blamed stage. VLM re-run implies
+    extraction re-run (downstream dependency). Emission blame is terminal
+    because it's a deterministic code bug.
+    """
+    reading: DiagramReading | None = None
+    extraction: Extraction | None = None
+    lean_source = ""
+    status = LeanStatus.UNAVAILABLE
+    stderr: str | None = None
+
+    force_vlm = True
+    force_extraction = True
+
+    for _attempt in range(max_retries + 1):
+        if force_vlm:
+            reading = vlm.read(image_path, fixture_path=vlm_fixture_path)
+            force_vlm = False
+            force_extraction = True  # cascade: new reading → new extraction
+
+        if force_extraction:
+            assert reading is not None
+            extraction = extractor.extract(reading, problem_text)
+            force_extraction = False
+
+        assert extraction is not None
+        lean_source = theorem_from(
+            name=theorem_name,
+            assumptions=extraction.assumptions,
+            goal=extraction.goal,
+        )
+
+        if lean_runner is None:
+            status = LeanStatus.UNAVAILABLE
+            stderr = None
+            break
+
+        status, stderr = lean_runner.typecheck(lean_source)
+        if status is LeanStatus.OK:
+            break
+        if judge is None:
+            break
+
+        blame = judge.attribute_blame(
+            reading=reading,
+            extraction=extraction,
+            lean_source=lean_source,
+            lean_stderr=stderr or "",
+        )
+        if blame.stage == "vlm":
+            force_vlm = True
+            force_extraction = True
+        elif blame.stage == "extraction":
+            force_extraction = True
+        else:
+            # emission bug — can't recover by retry
+            break
+
+    assert reading is not None
+    assert extraction is not None
+    return PipelineResult(
+        reading=reading,
+        candidate_assumptions=list(extraction.assumptions),
+        confirmed_assumptions=list(extraction.assumptions),
+        goal_candidates=[extraction.goal] if extraction.goal else [],
+        selected_goal=extraction.goal,
+        lean_source=lean_source,
+        lean_status=status,
+        lean_stderr=stderr,
     )
