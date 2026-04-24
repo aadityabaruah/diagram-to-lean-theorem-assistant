@@ -18,5 +18,9 @@ class FixtureNotFoundError(PipelineError):
     """Raised when a benchmark expects a fixture JSON that does not exist."""
 
 
+class LeanError(PipelineError):
+    """Raised when lake build crashes unexpectedly (not a type error)."""
+
+
 class DiagramUnderstander(Protocol):
     def read(self, image_path: Path, *, fixture_path: Path | None = None) -> DiagramReading: ...
