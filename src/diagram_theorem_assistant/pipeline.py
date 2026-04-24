@@ -24,6 +24,7 @@ from pathlib import Path
 from diagram_theorem_assistant.assumption_extraction import infer_assumptions
 from diagram_theorem_assistant.consensus.judge import JudgeLLM
 from diagram_theorem_assistant.extraction.base import AssumptionExtractor, Extraction
+from diagram_theorem_assistant.lean_emission.claude_formalizer import ClaudeFormalizer
 from diagram_theorem_assistant.proof_generation.claude_prover import ClaudeProver
 from diagram_theorem_assistant.goal_generation import extract_goal_from_text, rank_goal_candidates
 from diagram_theorem_assistant.lean_export import theorem_from
@@ -124,6 +125,8 @@ def run_consensus_pipeline(
     vlm_fixture_path: Path | None = None,
     prover: ClaudeProver | None = None,
     prover_max_attempts: int = 3,
+    formalizer: ClaudeFormalizer | None = None,
+    formalizer_max_attempts: int = 5,
 ) -> PipelineResult:
     """Run the pipeline with dual-provider consensus and judge-mediated retry.
 
@@ -153,18 +156,35 @@ def run_consensus_pipeline(
             force_extraction = False
 
         assert extraction is not None
-        lean_source = theorem_from(
-            name=theorem_name,
-            assumptions=extraction.assumptions,
-            goal=extraction.goal,
-        )
+        if formalizer is not None and lean_runner is not None:
+            # Fully LLM-based emission — formalizer generates statement + proof
+            # together and verifies via lake build.
+            lean_source, status, stderr = formalizer.formalize(
+                reading=reading,
+                extraction=extraction,
+                theorem_name=theorem_name,
+                lean_runner=lean_runner,
+                max_attempts=formalizer_max_attempts,
+            )
+            # Formalizer already verified — skip the extra typecheck below.
+            if status is LeanStatus.OK:
+                break
+            if judge is None:
+                break
+            # else: fall through to blame attribution on the formalizer's output
+        else:
+            lean_source = theorem_from(
+                name=theorem_name,
+                assumptions=extraction.assumptions,
+                goal=extraction.goal,
+            )
 
-        if lean_runner is None:
-            status = LeanStatus.UNAVAILABLE
-            stderr = None
-            break
+            if lean_runner is None:
+                status = LeanStatus.UNAVAILABLE
+                stderr = None
+                break
 
-        status, stderr = lean_runner.typecheck(lean_source)
+            status, stderr = lean_runner.typecheck(lean_source)
         if status is LeanStatus.OK:
             break
         if judge is None:
