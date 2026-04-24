@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "id": "test_0000",
+    "path": "examples/images/geometry3k/test_0000.png",
+    "sha256": "60e24dce6e733fc5b2105b0a6f2ae75d04bc09d3ff60c6580f08599fcf2afe33",
+    "problem": "<image>Chords $\\overline{A C}$ and $\\overline{D F}$ are equidistant from the center. If the radius of $\\odot G$ is 26 find $A C$",
+    "answer": "48"
+  },
+  {
+    "id": "test_0001",
+    "path": "examples/images/geometry3k/test_0001.png",
+    "sha256": "8bd41ae747e159d3c0d5b3e6768fe5eb95d37711a14c9bf3712fa83152ea7b71",
+    "problem": "<image>Find the length of $\\widehat {ZY}$. Round to the nearest hundredth.",
+    "answer": "7.85"
+  },
+  {
+    "id": "test_0002",
+    "path": "examples/images/geometry3k/test_0002.png",
+    "sha256": "0acd18ad410b18717564de9dca51377f74a1d8f8430e6cc188e23abfca2ca4d2",
+    "problem": "<image>Find the area of the figure to the nearest tenth.",
+    "answer": "31.1"
+  },
+  {
+    "id": "test_0003",
+    "path": "examples/images/geometry3k/test_0003.png",
+    "sha256": "5d3ec061765e79dffae245310a76c73c60018967581e0820b7c23b7b63b6bda9",
+    "problem": "<image>If pentagons $A B C D E$ and $P Q R S T$ are similar, find $S R$",
+    "answer": "4 \\frac { 4 } { 11 }"
+  },
+  {
+    "id": "test_0004",
+    "path": "examples/images/geometry3k/test_0004.png",
+    "sha256": "35b0443d4bbbadcb54a74117b60d170aacd297e58a6939b9232c707721c10de3",
+    "problem": "<image>In $\\triangle PQR$, $\\overline{ST} \\| \\overline{R Q}$ . If  $PS=12.5$, $SR=5$, and $PT=15$, find $TQ$.",
+    "answer": "6"
+  },
+  {
+    "id": "test_0005",
+    "path": "examples/images/geometry3k/test_0005.png",
+    "sha256": "7d3442733979d7fe59ff4aaecb26dcf0c2af6fe1e3adcfd34783008e2d5f8c5b",
+    "problem": "<image>$a=14, b=48,$ and $c=50$ find $cosA$",
+    "answer": "0.96"
+  },
+  {
+    "id": "test_0006",
+    "path": "examples/images/geometry3k/test_0006.png",
+    "sha256": "3cb08974c83865510240609a0311f1d87a4f6beac5fa9aa13a9cdbe720efc9f2",
+    "problem": "<image>$\\overline{A C}$ is a diagonal of rhombus $A B C D$ If $m \\angle C D E$ is $116,$ what is $m \\angle A C D ?$",
+    "answer": "58"
+  },
+  {
+    "id": "test_0007",
+    "path": "examples/images/geometry3k/test_0007.png",
+    "sha256": "39bf5b4441f3d331e436d9c3ec9ab071e74becf2e6dc86c72aec0a2dab2424f4",
+    "problem": "<image>Use parallelogram $JKLM$ to find $m \\angle KLM$",
+    "answer": "71"
+  },
+  {
+    "id": "test_0008",
+    "path": "examples/images/geometry3k/test_0008.png",
+    "sha256": "f45a320560dd8ac9f8fedea34ae11e233e0a845e5efbc693e90feeddceef9796",
+    "problem": "<image>Find the perimeter of the parallelogram.",
+    "answer": "78"
+  },
+  {
+    "id": "test_0009",
+    "path": "examples/images/geometry3k/test_0009.png",
+    "sha256": "5fd8bc63819736f62189f36b4f6b289d72b6f3862164d59cbbc10fa16ba9331f",
+    "problem": "<image>Find x.",
+    "answer": "5 \\sqrt { 3 }"
+  }
+]
