@@ -1,12 +1,9 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from diagram_theorem_assistant.consensus.judge import JudgeVerdict
 from diagram_theorem_assistant.extraction.base import Extraction
 from diagram_theorem_assistant.extraction.consensus import ConsensusExtractor
 from diagram_theorem_assistant.schema import DiagramReading
-from diagram_theorem_assistant.vlm.base import VLMError
 
 
 def _reading():
@@ -74,14 +71,15 @@ def test_consensus_retries_on_disagreement():
     assert primary.extract.call_count == 2
 
 
-def test_consensus_raises_when_exhausted():
-    a = Extraction(assumptions=[], goal="a", raw={})
-    b = Extraction(assumptions=[], goal="b", raw={})
+def test_consensus_falls_back_to_intersection_when_exhausted():
+    a = Extraction(assumptions=["shared", "unique_a"], goal="a", raw={})
+    b = Extraction(assumptions=["shared", "unique_b"], goal="b", raw={})
     judge = _judge([
         JudgeVerdict(equivalent=False, preferred="a", reason="mismatch 1"),
         JudgeVerdict(equivalent=False, preferred="b", reason="mismatch 2"),
     ])
     cx = ConsensusExtractor(_extractor(a), _extractor(b), judge, max_attempts=2)
-    with pytest.raises(VLMError) as info:
-        cx.extract(_reading(), "text")
-    assert "consensus" in str(info.value).lower()
+    result = cx.extract(_reading(), "text")
+    # Intersection keeps only what both produced
+    assert result.assumptions == ["shared"]
+    assert "fallback" in result.raw.get("strategy", "")

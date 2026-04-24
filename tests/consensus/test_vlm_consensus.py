@@ -1,12 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from diagram_theorem_assistant.consensus.judge import JudgeVerdict
 from diagram_theorem_assistant.consensus.vlm_consensus import ConsensusVLMAdapter
 from diagram_theorem_assistant.schema import DiagramMark, DiagramReading
-from diagram_theorem_assistant.vlm.base import VLMError
 
 
 def _reading(objects=None, relations=None, marks=None):
@@ -76,7 +73,7 @@ def test_consensus_retries_on_disagreement(tmp_path: Path):
     assert secondary.read.call_count == 2
 
 
-def test_consensus_raises_when_attempts_exhausted(tmp_path: Path):
+def test_consensus_falls_back_to_merge_when_attempts_exhausted(tmp_path: Path):
     a = _reading(["point A"])
     b = _reading(["point X"])
     judge = _judge([
@@ -84,6 +81,7 @@ def test_consensus_raises_when_attempts_exhausted(tmp_path: Path):
         JudgeVerdict(equivalent=False, preferred="b", reason="mismatch 2"),
     ])
     adapter = ConsensusVLMAdapter(_adapter(a), _adapter(b), judge, max_attempts=2)
-    with pytest.raises(VLMError) as info:
-        adapter.read(tmp_path / "img.png")
-    assert "consensus" in str(info.value).lower()
+    result = adapter.read(tmp_path / "img.png")
+    assert "point A" in result.objects
+    assert "point X" in result.objects
+    assert "fallback" in result.raw_vlm_output.get("strategy", "")

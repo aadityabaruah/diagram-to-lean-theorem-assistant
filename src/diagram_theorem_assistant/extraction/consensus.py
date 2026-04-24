@@ -30,27 +30,34 @@ class ConsensusExtractor:
         self.max_attempts = max_attempts
 
     def extract(self, reading: DiagramReading, problem_text: str) -> Extraction:
+        last_a: Extraction | None = None
+        last_b: Extraction | None = None
         last_reason = ""
         for _ in range(self.max_attempts):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 fut_a = pool.submit(self.primary.extract, reading, problem_text)
                 fut_b = pool.submit(self.secondary.extract, reading, problem_text)
-                a = fut_a.result()
-                b = fut_b.result()
-            verdict: JudgeVerdict = self.judge.compare_extractions(a, b)
+                last_a = fut_a.result()
+                last_b = fut_b.result()
+            verdict: JudgeVerdict = self.judge.compare_extractions(last_a, last_b)
             if verdict.equivalent:
                 if verdict.preferred == "a":
-                    return a
+                    return last_a
                 if verdict.preferred == "b":
-                    return b
-                return _merge_intersection(a, b)
+                    return last_b
+                return _merge_intersection(last_a, last_b, strategy="judge-preferred-merge")
             last_reason = verdict.reason
-        raise VLMError(
-            f"Extraction consensus not reached after {self.max_attempts} attempts: {last_reason}"
+        # Attempts exhausted — fall back to intersection merge. Conservative
+        # by design: we drop anything only one provider produced, keeping the
+        # facts both agreed on.
+        assert last_a is not None and last_b is not None
+        return _merge_intersection(
+            last_a, last_b,
+            strategy=f"fallback-after-{self.max_attempts}-disagreements: {last_reason}",
         )
 
 
-def _merge_intersection(a: Extraction, b: Extraction) -> Extraction:
+def _merge_intersection(a: Extraction, b: Extraction, *, strategy: str = "merge") -> Extraction:
     b_set = set(b.assumptions)
     intersected = [x for x in a.assumptions if x in b_set]
     if a.goal and b.goal and a.goal == b.goal:
@@ -62,5 +69,5 @@ def _merge_intersection(a: Extraction, b: Extraction) -> Extraction:
     return Extraction(
         assumptions=intersected,
         goal=goal,
-        raw={"a": a.raw, "b": b.raw, "strategy": "merge"},
+        raw={"a": a.raw, "b": b.raw, "strategy": strategy},
     )
