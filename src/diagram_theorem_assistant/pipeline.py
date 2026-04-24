@@ -1,4 +1,22 @@
-"""Orchestration pipeline: VLM reading → assumptions → goals → Lean typecheck."""
+"""Orchestration pipeline: VLM reading → assumptions → goals → Lean typecheck.
+
+Two public entry points:
+
+* :func:`run_pipeline_from_reading` — the core stage composer. Callers supply
+  an already-computed :class:`DiagramReading` (e.g. the UI, which reads once and
+  then asks the user to review) plus the explicit confirmed-assumption list.
+
+* :func:`run_pipeline` — convenience wrapper that reads the diagram via the
+  supplied adapter and delegates to :func:`run_pipeline_from_reading`.
+
+The helper :func:`candidate_assumptions` computes the inferred-but-unreviewed
+assumption list from a reading + problem text so callers can show checkboxes.
+
+``confirmed_assumptions`` is always an explicit :class:`list` — there is no
+implicit fallback to the inferred candidates. Callers that want to accept the
+candidates wholesale pass them in explicitly, so "caller forgot to confirm"
+and "user confirmed nothing" are distinguishable.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,72 +25,50 @@ from diagram_theorem_assistant.assumption_extraction import infer_assumptions
 from diagram_theorem_assistant.goal_generation import extract_goal_from_text, rank_goal_candidates
 from diagram_theorem_assistant.lean_export import theorem_from
 from diagram_theorem_assistant.lean_runner import LeanRunner
-from diagram_theorem_assistant.schema import LeanStatus, PipelineResult
+from diagram_theorem_assistant.schema import DiagramReading, LeanStatus, PipelineResult
 from diagram_theorem_assistant.vlm.base import DiagramUnderstander
 
 
-def run_pipeline(
-    *,
-    image_path: Path,
-    problem_text: str,
-    confirmed_assumptions: list[str] | None,
-    vlm: DiagramUnderstander,
-    vlm_fixture_path: Path | None = None,
-    lean_runner: LeanRunner | None = None,
-    theorem_name: str = "generated_theorem",
-) -> PipelineResult:
-    """Run the full diagram-theorem pipeline.
+def candidate_assumptions(reading: DiagramReading, problem_text: str) -> list[str]:
+    """Compute inferred (unreviewed) assumptions from a reading + problem text.
 
-    Steps
-    -----
-    1. Read the diagram via *vlm*.
-    2. Infer candidate assumptions from objects, marks, relations, and problem text.
-    3. Use *confirmed_assumptions* if supplied; otherwise fall back to inferred candidates.
-    4. Extract a goal from *problem_text*.
-    5. Rank goal candidates from objects + confirmed assumptions.
-    6. Build an ordered list of goal candidates (extracted first, then ranked).
-    7. Select the primary goal (extracted > first ranked > empty string).
-    8. Emit Lean source via :func:`theorem_from`.
-    9. Typecheck with *lean_runner* when present; otherwise return UNAVAILABLE.
-    10. Return a :class:`~diagram_theorem_assistant.schema.PipelineResult`.
+    UIs call this to populate the "confirm assumptions" checkbox list. The
+    same function is used internally by the pipeline so the two agree.
     """
-    # Step 1 — VLM reading
-    reading = vlm.read(image_path, fixture_path=vlm_fixture_path)
-
-    # Step 2 — infer candidate assumptions
-    candidate = infer_assumptions(
+    return infer_assumptions(
         problem_text=problem_text,
         objects=reading.objects,
-        diagram_marks=[m.to_dict() for m in reading.marks],
+        diagram_marks=[mark.to_dict() for mark in reading.marks],
         confirmed_assumptions=None,
         relations=reading.relations,
     )
 
-    # Step 3 — resolve confirmed assumptions
-    confirmed = confirmed_assumptions if confirmed_assumptions is not None else candidate
 
-    # Step 4 — extract goal from problem text
+def run_pipeline_from_reading(
+    *,
+    reading: DiagramReading,
+    problem_text: str,
+    confirmed_assumptions: list[str],
+    lean_runner: LeanRunner | None = None,
+    theorem_name: str = "generated_theorem",
+) -> PipelineResult:
+    """Run the assumption → goal → Lean stages on a pre-computed reading."""
+    candidate = candidate_assumptions(reading, problem_text)
+    confirmed = list(confirmed_assumptions)
+
     extracted = extract_goal_from_text(problem_text)
-
-    # Step 5 — rank goal candidates
     ranked = rank_goal_candidates(reading.objects, confirmed)
+    goal_candidates: list[str] = [extracted, *ranked] if extracted is not None else ranked
+    selected = extracted if extracted is not None else (ranked[0] if ranked else "")
 
-    # Step 6 — build ordered goal_candidates list
-    goal_candidates: list[str] = [extracted, *ranked] if extracted else ranked
-
-    # Step 7 — select primary goal
-    selected = extracted or (ranked[0] if ranked else "")
-
-    # Step 8 — emit Lean source
     lean_source = theorem_from(name=theorem_name, assumptions=confirmed, goal=selected)
 
-    # Step 9 — typecheck
-    if lean_runner is not None:
-        status, stderr = lean_runner.typecheck(lean_source)
+    if lean_runner is None:
+        status: LeanStatus = LeanStatus.UNAVAILABLE
+        stderr: str | None = None
     else:
-        status, stderr = LeanStatus.UNAVAILABLE, None
+        status, stderr = lean_runner.typecheck(lean_source)
 
-    # Step 10 — return result
     return PipelineResult(
         reading=reading,
         candidate_assumptions=candidate,
@@ -82,4 +78,31 @@ def run_pipeline(
         lean_source=lean_source,
         lean_status=status,
         lean_stderr=stderr,
+    )
+
+
+def run_pipeline(
+    *,
+    image_path: Path,
+    problem_text: str,
+    confirmed_assumptions: list[str],
+    vlm: DiagramUnderstander,
+    vlm_fixture_path: Path | None = None,
+    lean_runner: LeanRunner | None = None,
+    theorem_name: str = "generated_theorem",
+) -> PipelineResult:
+    """Read the diagram and run the full pipeline.
+
+    ``confirmed_assumptions`` is required — callers must decide what to confirm
+    before calling. To accept the inferred candidates wholesale, first call
+    :func:`candidate_assumptions` after a separate :meth:`DiagramUnderstander.read`
+    and pass the result in.
+    """
+    reading = vlm.read(image_path, fixture_path=vlm_fixture_path)
+    return run_pipeline_from_reading(
+        reading=reading,
+        problem_text=problem_text,
+        confirmed_assumptions=confirmed_assumptions,
+        lean_runner=lean_runner,
+        theorem_name=theorem_name,
     )

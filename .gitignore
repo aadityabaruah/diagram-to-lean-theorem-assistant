@@ -8,3 +8,4 @@ lean_project/.lake/
 lean_project/lake-packages/
 lean_project/build/
 examples/images/geometry3k/
+lean_project/DiagramTheorems/Generated.lean

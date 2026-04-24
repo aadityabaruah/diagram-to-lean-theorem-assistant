@@ -60,6 +60,7 @@ class DiagramReading:
 class LeanStatus(StrEnum):
     OK = "ok"
     TYPE_ERROR = "type_error"
+    TIMEOUT = "timeout"
     UNAVAILABLE = "unavailable"
 
 

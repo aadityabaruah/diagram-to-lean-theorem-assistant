@@ -1,6 +1,6 @@
 # Diagram-to-Lean Theorem Assistant
 
-Translate geometry diagrams and optional problem text into Lean 4 theorem candidates via a vision-language model. The system extracts named objects, relations, and visual marks from an input image, proposes candidate assumptions and ranked goal theorems, lets a human confirm, and emits a Lean source file that imports `Mathlib` and type-checks.
+Translate geometry diagrams and optional problem text into Lean 4 theorem candidates via a vision-language model. The system extracts named objects, relations, and visual marks from an input image, proposes candidate assumptions and ranked goal theorems, lets a human confirm, and emits a Lean 4 source file that imports a Mathlib-backed helper module and declares the theorem statement. Proof bodies are left as `sorry` — statement-level validity (the theorem declaration type-checks) is the deliverable.
 
 ## Design and plan
 

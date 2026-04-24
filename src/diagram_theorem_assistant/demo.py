@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from diagram_theorem_assistant.lean_runner import LeanRunner
-from diagram_theorem_assistant.pipeline import run_pipeline
+from diagram_theorem_assistant.pipeline import candidate_assumptions, run_pipeline_from_reading
 from diagram_theorem_assistant.vlm.fixture import FixtureAdapter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -23,14 +23,17 @@ def _lean_runner() -> LeanRunner | None:
 
 def run_demo() -> dict[str, Any]:
     adapter = FixtureAdapter(REPO_ROOT / "examples" / "vlm_fixtures")
-    runner = _lean_runner()
-    result = run_pipeline(
-        image_path=REPO_ROOT / "examples" / "images" / "synthetic" / "isosceles_triangle.png",
-        problem_text="In triangle ABC, AB = AC. Prove angle ABC = angle BCA.",
-        confirmed_assumptions=None,
-        vlm=adapter,
-        vlm_fixture_path=REPO_ROOT / "examples" / "vlm_fixtures" / "isosceles_triangle_base_angles.json",
-        lean_runner=runner,
+    image_path = REPO_ROOT / "examples" / "images" / "synthetic" / "isosceles_triangle.png"
+    fixture_path = REPO_ROOT / "examples" / "vlm_fixtures" / "isosceles_triangle_base_angles.json"
+    problem_text = "In triangle ABC, AB = AC. Prove angle ABC = angle BCA."
+
+    reading = adapter.read(image_path, fixture_path=fixture_path)
+    confirmed = candidate_assumptions(reading, problem_text)
+    result = run_pipeline_from_reading(
+        reading=reading,
+        problem_text=problem_text,
+        confirmed_assumptions=confirmed,
+        lean_runner=_lean_runner(),
         theorem_name="isosceles_base_angles",
     )
     return {

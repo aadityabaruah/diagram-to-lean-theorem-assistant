@@ -56,7 +56,18 @@ def main() -> int:
 
     for index in range(count):
         example = ds[index]
-        image = example["images"][0]
+        try:
+            images = example["images"]
+            image = images[0] if isinstance(images, list) else images
+            problem = example.get("problem", "")
+            answer = example.get("answer", "")
+        except (KeyError, IndexError, TypeError) as exc:
+            print(
+                f"  skipping index {index}: unexpected schema ({type(exc).__name__}: {exc}). "
+                f"Available keys: {list(example.keys()) if hasattr(example, 'keys') else 'unknown'}",
+                file=sys.stderr,
+            )
+            continue
 
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
@@ -72,8 +83,8 @@ def main() -> int:
                 "id": example_id,
                 "path": str(out_path.relative_to(REPO_ROOT)),
                 "sha256": digest,
-                "problem": example["problem"],
-                "answer": example["answer"],
+                "problem": problem,
+                "answer": answer,
             }
         )
         print(f"  saved {out_path.relative_to(REPO_ROOT)} ({len(png_bytes)} bytes)")

@@ -46,10 +46,10 @@ class LeanRunner:
                 timeout=self.timeout_sec,
             )
         except subprocess.TimeoutExpired:
-            return LeanStatus.TYPE_ERROR, "lake build timed out"
+            return LeanStatus.TIMEOUT, f"lake build exceeded {self.timeout_sec}s"
         except (OSError, subprocess.SubprocessError) as exc:
             raise LeanError(f"lake invocation failed: {exc}") from exc
 
         if completed.returncode == 0:
-            return LeanStatus.OK, completed.stderr.strip()
-        return LeanStatus.TYPE_ERROR, completed.stderr.strip()
+            return LeanStatus.OK, None
+        return LeanStatus.TYPE_ERROR, completed.stderr.strip() or None

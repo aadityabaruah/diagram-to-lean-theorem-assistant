@@ -34,7 +34,7 @@ def test_runner_writes_file_and_parses_success(tmp_path: Path):
 
     assert generated.exists()
     assert status is LeanStatus.OK
-    assert stderr == ""
+    assert stderr is None
 
 
 def test_runner_parses_type_error(tmp_path: Path):
@@ -60,8 +60,8 @@ def test_runner_handles_timeout(tmp_path: Path):
          patch("diagram_theorem_assistant.lean_runner.subprocess.run", side_effect=_raise):
         runner = LeanRunner(project_root=tmp_path, generated_path=tmp_path / "g.lean", timeout_sec=1)
         status, stderr = runner.typecheck("slow")
-    assert status is LeanStatus.TYPE_ERROR
-    assert "timed out" in stderr
+    assert status is LeanStatus.TIMEOUT
+    assert "exceeded" in stderr
 
 
 def test_runner_raises_on_unexpected_failure(tmp_path: Path):

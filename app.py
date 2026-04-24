@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from diagram_theorem_assistant.assumption_extraction import infer_assumptions
-from diagram_theorem_assistant.goal_generation import extract_goal_from_text, rank_goal_candidates
-from diagram_theorem_assistant.lean_export import theorem_from
-from diagram_theorem_assistant.lean_runner import LeanRunner
 from diagram_theorem_assistant.metrics import (
     assumption_precision,
     assumption_recall,
@@ -18,7 +13,11 @@ from diagram_theorem_assistant.metrics import (
     lean_validity_rate,
     top_k_goal_accuracy,
 )
-from diagram_theorem_assistant.pipeline import run_pipeline
+from diagram_theorem_assistant.pipeline import (
+    candidate_assumptions,
+    run_pipeline_from_reading,
+)
+from diagram_theorem_assistant.lean_runner import LeanRunner
 from diagram_theorem_assistant.schema import LeanStatus, load_benchmark
 from diagram_theorem_assistant.vlm.base import FixtureNotFoundError, VLMError
 from diagram_theorem_assistant.vlm.fixture import FixtureAdapter
@@ -54,6 +53,8 @@ def _status_badge(status: LeanStatus) -> str:
         return ":green[✓ Type-checked by Lean]"
     if status is LeanStatus.TYPE_ERROR:
         return ":red[✗ Lean type error]"
+    if status is LeanStatus.TIMEOUT:
+        return ":orange[⏱ Lean build timed out]"
     return ":orange[Lean unavailable]"
 
 
@@ -66,7 +67,7 @@ def interactive_page() -> None:
     example = choices[selection]
 
     image_path = REPO_ROOT / example.image
-    st.image(str(image_path), caption=example.id, use_column_width=False, width=400)
+    st.image(str(image_path), caption=example.id, width=400)
 
     api_key = os.environ.get("GEMINI_API_KEY", "")
     mode = st.sidebar.radio(
@@ -98,13 +99,7 @@ def interactive_page() -> None:
     st.subheader("VLM reading")
     st.json(reading.to_dict())
 
-    candidate = infer_assumptions(
-        problem_text=st.session_state.get("problem_text", ""),
-        objects=reading.objects,
-        diagram_marks=[mark.to_dict() for mark in reading.marks],
-        confirmed_assumptions=None,
-        relations=reading.relations,
-    )
+    candidate = candidate_assumptions(reading, st.session_state.get("problem_text", ""))
 
     st.subheader("Confirm assumptions")
     confirmed = [a for a in candidate if st.checkbox(a, value=True, key=f"chk-{a}")]
@@ -112,37 +107,28 @@ def interactive_page() -> None:
     if extra.strip():
         confirmed.append(extra.strip())
 
-    extracted_goal = extract_goal_from_text(st.session_state.get("problem_text", ""))
-    ranked = rank_goal_candidates(reading.objects, confirmed)
-    candidates = [extracted_goal, *ranked] if extracted_goal else ranked
-    candidates = [c for c in candidates if c]
-
-    st.subheader("Select goal")
-    if not candidates:
-        selected = st.text_input("Enter goal manually", key="manual-goal")
-    else:
-        selected = st.radio("Ranked goal candidates", candidates, key="goal-radio")
-
-    if st.button("Generate Lean theorem") and selected:
-        source = theorem_from(
-            name=st.session_state["example"].lean_theorem_name,
-            assumptions=confirmed,
-            goal=selected,
+    if st.button("Generate Lean theorem"):
+        result = run_pipeline_from_reading(
+            reading=reading,
+            problem_text=st.session_state.get("problem_text", ""),
+            confirmed_assumptions=confirmed,
+            lean_runner=_lean_runner(),
+            theorem_name=st.session_state["example"].lean_theorem_name,
         )
-        runner = _lean_runner()
-        if runner:
-            status, stderr = runner.typecheck(source)
-        else:
-            status, stderr = LeanStatus.UNAVAILABLE, None
+
+        st.subheader("Goal candidates")
+        if result.goal_candidates:
+            st.write(result.goal_candidates)
+        st.write(f"**Selected:** `{result.selected_goal or '(none)'}`")
 
         st.subheader("Lean output")
-        st.markdown(_status_badge(status))
-        if stderr:
-            st.code(stderr, language="text")
-        st.code(source, language="lean")
+        st.markdown(_status_badge(result.lean_status))
+        if result.lean_status in (LeanStatus.TYPE_ERROR, LeanStatus.TIMEOUT) and result.lean_stderr:
+            st.code(result.lean_stderr, language="text")
+        st.code(result.lean_source, language="lean")
         st.download_button(
             "Download .lean",
-            data=source,
+            data=result.lean_source,
             file_name=f"{st.session_state['example'].lean_theorem_name}.lean",
         )
 
@@ -159,12 +145,11 @@ def benchmark_page() -> None:
     for example in examples:
         fixture_path = REPO_ROOT / example.vlm_fixture
         try:
-            result = run_pipeline(
-                image_path=REPO_ROOT / example.image,
+            reading = adapter.read(REPO_ROOT / example.image, fixture_path=fixture_path)
+            result = run_pipeline_from_reading(
+                reading=reading,
                 problem_text=example.problem_text,
                 confirmed_assumptions=example.gold_assumptions,
-                vlm=adapter,
-                vlm_fixture_path=fixture_path,
                 lean_runner=runner,
                 theorem_name=example.lean_theorem_name,
             )
@@ -172,16 +157,22 @@ def benchmark_page() -> None:
             st.error(f"{example.id}: {exc}")
             continue
 
-        rows.append({
-            "id": example.id,
-            "category": example.category,
-            "assumption_precision": assumption_precision(result.confirmed_assumptions, example.gold_assumptions),
-            "assumption_recall": assumption_recall(result.confirmed_assumptions, example.gold_assumptions),
-            "top_1": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 1),
-            "top_3": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 3),
-            "top_5": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 5),
-            "lean_status": result.lean_status.value,
-        })
+        rows.append(
+            {
+                "id": example.id,
+                "category": example.category,
+                "assumption_precision": assumption_precision(
+                    result.confirmed_assumptions, example.gold_assumptions
+                ),
+                "assumption_recall": assumption_recall(
+                    result.confirmed_assumptions, example.gold_assumptions
+                ),
+                "top_1": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 1),
+                "top_3": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 3),
+                "top_5": top_k_goal_accuracy(result.goal_candidates, example.gold_goal, 5),
+                "lean_status": result.lean_status.value,
+            }
+        )
         per_category.setdefault(example.category, []).append(result)
 
     st.subheader("Per-example")
