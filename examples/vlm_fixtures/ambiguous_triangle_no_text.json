@@ -1,0 +1,6 @@
+{
+  "objects": ["point A", "point B", "point C", "segment AB", "segment AC", "segment BC"],
+  "relations": ["triangle A B C"],
+  "marks": [],
+  "raw_vlm_output": {"source": "hand-authored-fixture"}
+}

@@ -1,0 +1,8 @@
+{
+  "objects": ["point A", "point B", "point P", "line l", "segment AB", "segment PA", "segment PB"],
+  "relations": ["collinear A midpoint_AB B"],
+  "marks": [
+    {"type": "perpendicular_bisector", "point": "P", "segment": "AB"}
+  ],
+  "raw_vlm_output": {"source": "hand-authored-fixture"}
+}

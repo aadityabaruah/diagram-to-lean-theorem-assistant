@@ -82,13 +82,50 @@ def infer_assumptions(
     objects: list[str],
     diagram_marks: list[dict[str, Any]],
     confirmed_assumptions: list[str] | None = None,
+    relations: list[str] | None = None,
 ) -> list[str]:
     return merge_assumptions(
         confirmed_assumptions or [],
+        assumptions_from_relations(relations or []),
         assumptions_from_objects(objects),
         assumptions_from_marks(diagram_marks),
         assumptions_from_text(problem_text),
     )
+
+
+def assumptions_from_relations(relations: list[str]) -> list[str]:
+    assumptions: list[str] = []
+    for relation in relations:
+        tokens = relation.split()
+        if not tokens:
+            continue
+        head = tokens[0]
+        if head == "triangle" and len(tokens) == 4:
+            assumptions.append(relation)
+        elif head == "parallel" and len(tokens) == 3:
+            assumptions.append(relation)
+        elif head == "collinear" and len(tokens) == 4:
+            assumptions.append(relation)
+        elif head == "perpendicular" and len(tokens) == 3:
+            # "perpendicular AC BC" → right angle at the shared vertex
+            assumptions.append(relation)
+            assumptions.extend(_right_angle_from_perpendicular(tokens[1], tokens[2]))
+        elif head == "incidence" and len(tokens) == 3:
+            assumptions.append(relation)
+        elif head == "transversal" and len(tokens) == 4:
+            assumptions.append(relation)
+    return merge_assumptions(assumptions)
+
+
+def _right_angle_from_perpendicular(seg_a: str, seg_b: str) -> list[str]:
+    if len(seg_a) == 2 and len(seg_b) == 2:
+        shared = set(seg_a) & set(seg_b)
+        if len(shared) == 1:
+            vertex = next(iter(shared))
+            other_a = (set(seg_a) - {vertex}).pop()
+            other_b = (set(seg_b) - {vertex}).pop()
+            return [f"right_angle {other_a} {vertex} {other_b}"]
+    return []
 
 
 def merge_assumptions(*groups: Iterable[str]) -> list[str]:
