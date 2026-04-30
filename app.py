@@ -151,6 +151,21 @@ def interactive_page() -> None:
         attempt_proof = False
         prover_max_attempts = 0
 
+    # Standalone prover toggle for the deterministic Interactive flow —
+    # available even when consensus mode is off.
+    st.sidebar.divider()
+    st.sidebar.subheader("Proof generation")
+    prove_in_interactive = st.sidebar.checkbox(
+        "Try to replace `sorry` with a real proof",
+        value=False,
+        help="After 'Generate Lean theorem', send the file to Claude Opus 4.7 and iterate "
+             "lake-build errors up to N times. Geometry proofs are hard — works on Pythagoras "
+             "and similar; isosceles base angles typically stays as sorry.",
+    )
+    interactive_prover_attempts = (
+        st.sidebar.slider("Proof attempts", 1, 6, 4) if prove_in_interactive else 0
+    )
+
     st.subheader("Problem text")
     problem_text = st.text_area("Optional problem statement", value=example.problem_text, height=80)
 
@@ -247,18 +262,54 @@ def interactive_page() -> None:
         confirmed.append(extra.strip())
 
     if st.button("Generate Lean theorem"):
+        runner = _lean_runner()
         result = run_pipeline_from_reading(
             reading=reading,
             problem_text=st.session_state.get("problem_text", ""),
             confirmed_assumptions=confirmed,
-            lean_runner=_lean_runner(),
+            lean_runner=runner,
             theorem_name=st.session_state["example"].lean_theorem_name,
         )
+
+        # Optional: ask Claude to replace `sorry` with a real proof
+        if (
+            prove_in_interactive
+            and runner is not None
+            and "sorry" in result.lean_source
+        ):
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not anthropic_key:
+                st.warning("ANTHROPIC_API_KEY missing — skipping proof attempt.")
+            else:
+                with st.spinner(
+                    f"Attempting proof via Claude Opus 4.7 (up to {interactive_prover_attempts} rounds)…"
+                ):
+                    try:
+                        prover = ClaudeProver(api_key=anthropic_key)
+                        new_source, new_status, new_stderr = prover.prove(
+                            result.lean_source,
+                            lean_runner=runner,
+                            max_attempts=interactive_prover_attempts,
+                        )
+                        # Rebuild result with the prover's output
+                        from dataclasses import replace
+                        result = replace(
+                            result,
+                            lean_source=new_source,
+                            lean_status=new_status,
+                            lean_stderr=new_stderr,
+                        )
+                    except VLMError as exc:
+                        st.error(f"Prover error: {exc}")
 
         st.subheader("Goal candidates")
         if result.goal_candidates:
             st.write(result.goal_candidates)
         st.write(f"**Selected:** `{result.selected_goal or '(none)'}`")
+        if "sorry" in result.lean_source:
+            st.info("Proof body is `sorry` — statement is real, proof not provided. Toggle 'Try to replace sorry' in the sidebar to attempt a real proof via Claude.")
+        else:
+            st.success("Proof closed — `sorry`-free, verified by `lake build`.")
 
         st.subheader("Lean output")
         st.markdown(_status_badge(result.lean_status))
