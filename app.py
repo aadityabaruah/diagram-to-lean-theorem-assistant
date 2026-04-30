@@ -175,9 +175,19 @@ def interactive_page() -> None:
     st.subheader("Direct Claude solve (image → Lean, no extraction stage)")
     st.caption(
         "Sends the image and problem text directly to Claude Opus 4.7, iterates "
-        "`lake build` errors back to it. No regex extraction, no `sorry` fallback."
+        "`lake build` errors back to it. No regex extraction stage."
     )
-    direct_attempts = st.slider("Direct-solve attempts", 1, 8, 5, key="direct-attempts")
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        direct_attempts = st.slider("Direct-solve attempts", 1, 8, 5, key="direct-attempts")
+    with col_b:
+        statement_only = st.checkbox(
+            "Statement only (sorry OK)",
+            value=False,
+            help="Ask Claude to formalize the theorem statement — proper hypothesis "
+                 "types, real goal — and accept `sorry` for the proof body. Faster, "
+                 "more reliable; turn off to demand a real proof.",
+        )
     if st.button("Run direct Claude solve"):
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not anthropic_key:
@@ -187,9 +197,13 @@ def interactive_page() -> None:
         if runner is None:
             st.error("Lean project not found at lean_project/. Cannot verify the proof.")
             st.stop()
-        with st.spinner(
-            f"Sending image to Claude Opus 4.7 + lake-build oracle (up to {direct_attempts} rounds)…"
-        ):
+        spinner_msg = (
+            f"Asking Claude Opus 4.7 to formalize the theorem statement "
+            f"(up to {direct_attempts} rounds)…"
+            if statement_only
+            else f"Sending image to Claude Opus 4.7 + lake-build oracle (up to {direct_attempts} rounds)…"
+        )
+        with st.spinner(spinner_msg):
             try:
                 solver = ClaudeDirectSolver(api_key=anthropic_key)
                 source, status, stderr = solver.solve(
@@ -198,16 +212,20 @@ def interactive_page() -> None:
                     theorem_name=example.lean_theorem_name,
                     lean_runner=runner,
                     max_attempts=direct_attempts,
+                    allow_sorry=statement_only,
                 )
             except VLMError as exc:
                 st.error(str(exc))
                 st.stop()
         proved = status is LeanStatus.OK and "sorry" not in source
+        compiles = status is LeanStatus.OK
         st.markdown(_status_badge(status))
-        if proved:
+        if statement_only and compiles:
+            st.success("✓ Theorem formalized — statement type-checks. Proof body is `sorry` (by design).")
+        elif proved:
             st.success("✓ Proof closed — `sorry`-free, verified by `lake build`.")
-        elif "sorry" in source:
-            st.warning("Compiles but contains `sorry` — Claude couldn't close the proof.")
+        elif compiles and "sorry" in source:
+            st.warning("Compiles but contains `sorry` — toggle 'Statement only' off to demand a real proof.")
         else:
             st.warning("Did not compile cleanly. See stderr below.")
         if stderr:

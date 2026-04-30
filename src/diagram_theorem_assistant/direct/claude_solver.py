@@ -92,6 +92,41 @@ under `lake build`.
 """
 
 
+FORMALIZE_PROMPT = """You are a Lean 4 + mathlib4 expert with vision. Look at
+the geometry diagram I'm sending and produce a Lean 4 file that FORMALIZES
+the theorem statement faithfully — proper hypothesis types and a real
+proposition for the goal. The proof body can be `sorry`; what matters is
+that the theorem signature precisely captures the math.
+
+{problem_clause}
+
+ABSOLUTE RULES:
+
+1. The goal of the theorem MUST be the literal mathematical claim from the
+   problem text — not a weaker, trivially-derivable restatement.
+   - "prove ∠ABC = ∠BCA" → goal MUST be `∠ A B C = ∠ B C A` (use `∠`)
+   - "prove AB² = AC² + BC²" → goal MUST involve squared distances
+2. Hypotheses must be the geometric givens. Never bind the goal as a
+   hypothesis (circular). Skip a hypothesis if you cannot formalize it
+   cleanly — but do not fabricate one that trivializes the proof.
+3. NEVER use `: True` as the theorem type.
+4. The proof body is `by sorry` — do not attempt the actual proof. We
+   want the SIGNATURE right, the proof comes later.
+5. Single theorem named `{theorem_name}`. `import DiagramTheorems.Basic`,
+   `namespace DiagramTheorems.Generated ... end`, `open EuclideanGeometry Real`.
+
+Type hints (use what fits):
+- Points in 2D: `(A B C : EuclideanSpace ℝ (Fin 2))`
+- Or fully general: `{{V P : Type*}} [NormedAddCommGroup V] [InnerProductSpace ℝ V]
+  [MetricSpace P] [NormedAddTorsor V P]` then `(A B C : P)`
+- Distance: `dist A B`. Angle: `∠ A B C`. Right angle: `Real.pi / 2`.
+- Midpoint: `M = midpoint ℝ A B`.
+
+Respond with ONLY the complete Lean source. No `<think>` blocks, no markdown
+fences, no commentary.
+"""
+
+
 RETRY_PROMPT = """Your previous Lean file produced this `lake build` error:
 
 ```
@@ -132,12 +167,18 @@ class ClaudeDirectSolver:
         theorem_name: str,
         lean_runner: LeanRunner,
         max_attempts: int = 5,
+        allow_sorry: bool = False,
     ) -> tuple[str, LeanStatus, str | None]:
         """Send image + prompt to Claude, verify with lake build, retry on errors.
 
-        Returns ``(source, status, stderr)``. If any attempt builds cleanly
-        with no ``sorry``, that source is returned. Otherwise the last
+        Returns ``(source, status, stderr)``. If any attempt builds cleanly,
+        passes the goal-weakening guard, and (when ``allow_sorry=False``)
+        contains no ``sorry``, that source is returned. Otherwise the last
         attempt is returned with its failing status.
+
+        With ``allow_sorry=True`` we treat the task as "formalize the
+        theorem statement faithfully" — Claude can leave ``sorry`` for the
+        proof body. The hypothesis-and-goal correctness checks still apply.
         """
         image_bytes = Path(image_path).read_bytes()
         image_b64 = base64.standard_b64encode(image_bytes).decode("ascii")
@@ -154,9 +195,13 @@ class ClaudeDirectSolver:
         last_status = LeanStatus.UNAVAILABLE
         last_stderr: str | None = None
 
+        primary_prompt = (
+            FORMALIZE_PROMPT if allow_sorry else SOLVE_PROMPT
+        )
+
         for attempt in range(max_attempts):
             if attempt == 0:
-                user_text = SOLVE_PROMPT.format(
+                user_text = primary_prompt.format(
                     problem_clause=problem_clause,
                     theorem_name=theorem_name,
                 )
@@ -199,22 +244,24 @@ class ClaudeDirectSolver:
             last_status = status
             last_stderr = stderr
 
-            if status is LeanStatus.OK and "sorry" not in candidate:
-                # Final check: did Claude weaken the goal to dodge the problem?
+            if status is LeanStatus.OK:
+                # Whether or not sorry is allowed, the goal must not be weakened.
                 weak_reason = _weakened_goal_reason(candidate, problem_text)
-                if weak_reason is None:
-                    return candidate, status, stderr
-                previous_error = (
-                    f"Your previous response compiled but the goal was weakened: "
-                    f"{weak_reason}. The goal MUST be the literal claim from the "
-                    f"problem text, not a trivial restatement of the hypothesis. "
-                    f"Re-read the problem and produce a proof of the actual theorem."
-                )
-                last_status = LeanStatus.TYPE_ERROR
-                last_stderr = previous_error
-                continue
+                if weak_reason is not None:
+                    previous_error = (
+                        f"Your previous response compiled but the goal was weakened: "
+                        f"{weak_reason}. The goal MUST be the literal claim from "
+                        f"the problem text, not a trivial restatement of the "
+                        f"hypothesis. Re-read the problem and emit the actual theorem."
+                    )
+                    last_status = LeanStatus.TYPE_ERROR
+                    last_stderr = previous_error
+                    continue
 
-            if status is LeanStatus.OK and "sorry" in candidate:
+                if allow_sorry or "sorry" not in candidate:
+                    return candidate, status, stderr
+
+                # allow_sorry is False and the candidate has sorry — nudge
                 previous_error = (
                     "Your previous response compiled but contained `sorry`. "
                     "That violates the rules. Replace `sorry` with a real proof. "
