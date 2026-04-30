@@ -24,6 +24,7 @@ from diagram_theorem_assistant.pipeline import (
     run_consensus_pipeline,
     run_pipeline_from_reading,
 )
+from diagram_theorem_assistant.direct.claude_solver import ClaudeDirectSolver
 from diagram_theorem_assistant.proof_generation.claude_prover import ClaudeProver
 from diagram_theorem_assistant.lean_runner import LeanRunner
 from diagram_theorem_assistant.schema import LeanStatus, load_benchmark
@@ -168,6 +169,58 @@ def interactive_page() -> None:
 
     st.subheader("Problem text")
     problem_text = st.text_area("Optional problem statement", value=example.problem_text, height=80)
+
+    # ---------- Direct Claude solver (image → Claude → verified Lean) ----------
+    st.markdown("---")
+    st.subheader("Direct Claude solve (image → Lean, no extraction stage)")
+    st.caption(
+        "Sends the image and problem text directly to Claude Opus 4.7, iterates "
+        "`lake build` errors back to it. No regex extraction, no `sorry` fallback."
+    )
+    direct_attempts = st.slider("Direct-solve attempts", 1, 8, 5, key="direct-attempts")
+    if st.button("Run direct Claude solve"):
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not anthropic_key:
+            st.error("ANTHROPIC_API_KEY missing in .env")
+            st.stop()
+        runner = _lean_runner()
+        if runner is None:
+            st.error("Lean project not found at lean_project/. Cannot verify the proof.")
+            st.stop()
+        with st.spinner(
+            f"Sending image to Claude Opus 4.7 + lake-build oracle (up to {direct_attempts} rounds)…"
+        ):
+            try:
+                solver = ClaudeDirectSolver(api_key=anthropic_key)
+                source, status, stderr = solver.solve(
+                    image_path=image_path,
+                    problem_text=problem_text,
+                    theorem_name=example.lean_theorem_name,
+                    lean_runner=runner,
+                    max_attempts=direct_attempts,
+                )
+            except VLMError as exc:
+                st.error(str(exc))
+                st.stop()
+        proved = status is LeanStatus.OK and "sorry" not in source
+        st.markdown(_status_badge(status))
+        if proved:
+            st.success("✓ Proof closed — `sorry`-free, verified by `lake build`.")
+        elif "sorry" in source:
+            st.warning("Compiles but contains `sorry` — Claude couldn't close the proof.")
+        else:
+            st.warning("Did not compile cleanly. See stderr below.")
+        if stderr:
+            st.code(stderr, language="text")
+        st.code(source, language="lean")
+        st.download_button(
+            "Download .lean",
+            data=source,
+            file_name=f"{example.lean_theorem_name}.lean",
+            key="direct-download",
+        )
+        st.stop()  # don't render the deterministic flow below for this run
+    st.markdown("---")
 
     if st.button("Run VLM extraction"):
         try:
