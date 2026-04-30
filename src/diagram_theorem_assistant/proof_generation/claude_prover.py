@@ -145,7 +145,7 @@ class ClaudeProver:
                 prompt = INITIAL_PROMPT.format(source=attempt_source)
             else:
                 prompt = RETRY_PROMPT.format(
-                    error=previous_error[:2000], previous=previous_attempt[:4000]
+                    error=previous_error[:3000], previous=previous_attempt[:6000]
                 )
 
             candidate = self._invoke(prompt)
@@ -157,7 +157,20 @@ class ClaudeProver:
             if status is LeanStatus.OK and "sorry" not in candidate:
                 return candidate, LeanStatus.OK, stderr
 
-            previous_error = stderr or "(no stderr)"
+            if status is LeanStatus.OK and "sorry" in candidate:
+                # File compiles but the model gave up. Specifically nudge it.
+                previous_error = (
+                    "Your previous response compiled but still contains `sorry`. "
+                    "You gave up. Try harder this time. Use the specific mathlib "
+                    "lemma `EuclideanGeometry.law_cos`, the cancellation tactic "
+                    "`linear_combination`, and `Real.injOn_cos` on `Set.Icc 0 π` "
+                    "with `EuclideanGeometry.angle_nonneg` and "
+                    "`EuclideanGeometry.angle_le_pi` to conclude angle equalities. "
+                    "Handle degenerate cases (`dist a b = 0` ↔ `a = b`) with "
+                    "`by_cases` and `dist_eq_zero`."
+                )
+            else:
+                previous_error = stderr or "(no stderr)"
             previous_attempt = candidate
 
         # All attempts exhausted — return the original source with sorry intact,
@@ -169,7 +182,7 @@ class ClaudeProver:
         def _gen():
             return self._client.messages.create(
                 model=self._model,
-                max_tokens=4096,
+                max_tokens=20000,
                 messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             )
 

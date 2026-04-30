@@ -226,7 +226,7 @@ class ClaudeFormalizer:
         def _gen():
             return self._client.messages.create(
                 model=self._model,
-                max_tokens=6144,
+                max_tokens=20000,
                 messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             )
 
