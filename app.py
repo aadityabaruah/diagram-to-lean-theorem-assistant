@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from pathlib import Path
 
 import streamlit as st
@@ -8,7 +10,6 @@ from dotenv import load_dotenv
 
 from diagram_theorem_assistant.consensus.judge import JudgeLLM
 from diagram_theorem_assistant.consensus.vlm_consensus import ConsensusVLMAdapter
-from diagram_theorem_assistant.extraction.base import Extraction
 from diagram_theorem_assistant.extraction.claude_extractor import ClaudeExtractor
 from diagram_theorem_assistant.extraction.consensus import ConsensusExtractor
 from diagram_theorem_assistant.extraction.gemini_extractor import GeminiExtractor
@@ -20,7 +21,6 @@ from diagram_theorem_assistant.metrics import (
     top_k_goal_accuracy,
 )
 from diagram_theorem_assistant.pipeline import (
-    candidate_assumptions,
     run_consensus_pipeline,
     run_pipeline_from_reading,
 )
@@ -40,6 +40,11 @@ IMAGES_DIR = REPO_ROOT / "examples" / "images" / "synthetic"
 LEAN_PROJECT = REPO_ROOT / "lean_project"
 GENERATED_LEAN = LEAN_PROJECT / "DiagramTheorems" / "Generated.lean"
 
+DEFAULT_PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+DEFAULT_SECONDARY_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+DEFAULT_JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-3.1-flash-lite-preview")
+DEFAULT_MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "1"))
+
 
 def _lean_runner() -> LeanRunner | None:
     if not LEAN_PROJECT.exists():
@@ -47,198 +52,156 @@ def _lean_runner() -> LeanRunner | None:
     return LeanRunner(project_root=LEAN_PROJECT, generated_path=GENERATED_LEAN)
 
 
-GEMINI_MODEL_CHOICES = [
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "Custom…",
-]
-
-
-def _adapter(mode: str, api_key: str, model: str):
-    if mode == "Gemini (live)":
-        if not api_key:
-            st.error("GEMINI_API_KEY missing. Set it in .env.")
-            st.stop()
-        return GeminiAdapter(api_key=api_key, model=model)
-    return FixtureAdapter(FIXTURES_DIR)
-
-
 def _status_badge(status: LeanStatus) -> str:
     if status is LeanStatus.OK:
-        return ":green[✓ Type-checked by Lean]"
+        return ":green[✓ Type-checked]"
     if status is LeanStatus.TYPE_ERROR:
-        return ":red[✗ Lean type error]"
+        return ":red[✗ Type error]"
     if status is LeanStatus.TIMEOUT:
-        return ":orange[⏱ Lean build timed out]"
-    return ":orange[Lean unavailable]"
+        return ":orange[⏱ Build timed out]"
+    return ":orange[Type-checker unavailable]"
+
+
+def _run_end_to_end(image_path: Path, problem_text: str, theorem_name: str):
+    """Run the full pipeline silently. Picks the strongest available backend."""
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    if gemini_key and anthropic_key:
+        primary = GeminiAdapter(api_key=gemini_key, model=DEFAULT_PRIMARY_MODEL)
+        secondary = ClaudeAdapter(api_key=anthropic_key, model=DEFAULT_SECONDARY_MODEL)
+        judge = JudgeLLM(api_key=gemini_key, model=DEFAULT_JUDGE_MODEL)
+        reader = ConsensusVLMAdapter(primary, secondary, judge, max_attempts=3)
+
+        primary_ext = GeminiExtractor(api_key=gemini_key, model=DEFAULT_PRIMARY_MODEL)
+        secondary_ext = ClaudeExtractor(api_key=anthropic_key, model=DEFAULT_SECONDARY_MODEL)
+        extractor = ConsensusExtractor(primary_ext, secondary_ext, judge, max_attempts=3)
+
+        return run_consensus_pipeline(
+            image_path=image_path,
+            problem_text=problem_text,
+            vlm=reader,
+            extractor=extractor,
+            judge=judge,
+            lean_runner=_lean_runner(),
+            theorem_name=theorem_name,
+            max_retries=DEFAULT_MAX_RETRIES,
+        )
+
+    if gemini_key:
+        reader = GeminiAdapter(api_key=gemini_key, model=DEFAULT_PRIMARY_MODEL)
+        extractor = GeminiExtractor(api_key=gemini_key, model=DEFAULT_PRIMARY_MODEL)
+        return run_consensus_pipeline(
+            image_path=image_path,
+            problem_text=problem_text,
+            vlm=reader,
+            extractor=extractor,
+            judge=None,
+            lean_runner=_lean_runner(),
+            theorem_name=theorem_name,
+            max_retries=0,
+        )
+
+    reader = FixtureAdapter(FIXTURES_DIR)
+    reading = reader.read(image_path, fixture_path=None)
+    return run_pipeline_from_reading(
+        reading=reading,
+        problem_text=problem_text,
+        confirmed_assumptions=None,
+        lean_runner=_lean_runner(),
+        theorem_name=theorem_name,
+    )
+
+
+def _sanitize_theorem_name(stem: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", stem).strip("_")
+    if not cleaned or cleaned[0].isdigit():
+        cleaned = f"user_{cleaned}" if cleaned else "user_theorem"
+    return cleaned
 
 
 def interactive_page() -> None:
-    st.header("Interactive: diagram → Lean theorem")
+    st.header("Diagram → Lean theorem")
 
-    examples = load_benchmark(BENCHMARK_PATH)
-    choices = {e.id: e for e in examples}
-    selection = st.selectbox("Benchmark example:", list(choices.keys()))
-    example = choices[selection]
-
-    image_path = REPO_ROOT / example.image
-    st.image(str(image_path), caption=example.id, width=400)
-
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    mode = st.sidebar.radio(
-        "VLM adapter",
-        options=["Fixture (deterministic)", "Gemini (live)"],
-        help="Fixture mode uses the committed VLM fixture; live mode calls Gemini.",
+    source = st.radio(
+        "Diagram source",
+        options=["Use example", "Upload your own"],
+        horizontal=True,
     )
-    st.sidebar.caption(f"API key set: {bool(api_key)}")
 
-    default_model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
-    default_index = (
-        GEMINI_MODEL_CHOICES.index(default_model)
-        if default_model in GEMINI_MODEL_CHOICES
-        else len(GEMINI_MODEL_CHOICES) - 1  # Custom…
-    )
-    chosen = st.sidebar.selectbox(
-        "Gemini model",
-        options=GEMINI_MODEL_CHOICES,
-        index=default_index,
-        disabled=(mode != "Gemini (live)"),
-        help="flash-lite = cheapest; pro = best accuracy on hand-drawn / real diagrams.",
-    )
-    if chosen == "Custom…":
-        model = st.sidebar.text_input("Custom model name", value=default_model)
+    image_path: Path | None = None
+    caption = ""
+    default_problem_text = ""
+    theorem_name = "user_theorem"
+
+    if source == "Use example":
+        examples = load_benchmark(BENCHMARK_PATH)
+        choices = {e.id: e for e in examples}
+        selection = st.selectbox("Example diagram:", list(choices.keys()))
+        example = choices[selection]
+        image_path = REPO_ROOT / example.image
+        caption = example.id
+        default_problem_text = example.problem_text
+        theorem_name = example.lean_theorem_name
     else:
-        model = chosen
-
-    st.sidebar.divider()
-    st.sidebar.subheader("Consensus mode (experimental)")
-
-    consensus_enabled = st.sidebar.checkbox(
-        "Enable dual-provider consensus",
-        value=False,
-        help="Run Gemini + Claude at each stage, judge LLM arbitrates. Requires both API keys.",
-    )
-
-    if consensus_enabled:
-        claude_model = st.sidebar.selectbox(
-            "Claude model",
-            options=["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-            index=0,
+        uploaded = st.file_uploader(
+            "Upload a diagram",
+            type=["png", "jpg", "jpeg", "webp"],
+            help="PNG, JPG, JPEG, or WEBP.",
         )
-        judge_model = st.sidebar.selectbox(
-            "Judge model",
-            options=["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview"],
-            index=0,
-        )
-        max_retries = st.sidebar.slider("Max retries on Lean failure", 0, 5, 3)
-    else:
-        claude_model = "claude-opus-4-7"
-        judge_model = "gemini-3.1-pro-preview"
-        max_retries = 0
+        if uploaded is not None:
+            suffix = Path(uploaded.name).suffix or ".png"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.write(uploaded.getbuffer())
+            tmp.flush()
+            tmp.close()
+            image_path = Path(tmp.name)
+            caption = uploaded.name
+            theorem_name = _sanitize_theorem_name(Path(uploaded.name).stem)
+
+    if image_path is not None:
+        st.image(str(image_path), caption=caption, width=400)
 
     st.subheader("Problem text")
-    problem_text = st.text_area("Optional problem statement", value=example.problem_text, height=80)
+    problem_text = st.text_area(
+        "Optional problem statement", value=default_problem_text, height=80
+    )
 
-    if st.button("Run VLM extraction"):
-        try:
-            adapter = _adapter(mode, api_key, model)
-            fixture_path = REPO_ROOT / example.vlm_fixture if example.vlm_fixture else None
-            reading = adapter.read(image_path, fixture_path=fixture_path)
-        except (VLMError, FixtureNotFoundError) as exc:
-            st.error(str(exc))
-            st.stop()
-        st.session_state["reading"] = reading
-        st.session_state["problem_text"] = problem_text
-        st.session_state["example"] = example
-        st.session_state["vlm_mode"] = mode
-        st.session_state["vlm_model"] = model if mode == "Gemini (live)" else "(fixture)"
+    can_run = image_path is not None
+    if not can_run:
+        st.info("Upload a diagram above to continue.")
 
-    if consensus_enabled:
-        if st.button("Run consensus pipeline (end-to-end)"):
-            gemini_key = os.environ.get("GEMINI_API_KEY", "")
-            anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            if not gemini_key or not anthropic_key:
-                st.error("Consensus mode requires both GEMINI_API_KEY and ANTHROPIC_API_KEY in .env")
+    if st.button("Generate Lean theorem", type="primary", disabled=not can_run):
+        with st.spinner("Generating theorem… this may take 30–60 seconds"):
+            try:
+                result = _run_end_to_end(
+                    image_path=image_path,
+                    problem_text=problem_text,
+                    theorem_name=theorem_name,
+                )
+            except (VLMError, FixtureNotFoundError) as exc:
+                st.error(str(exc))
+                st.stop()
+            except Exception as exc:  # noqa: BLE001 — surface in UI, don't kill server
+                st.error(f"{type(exc).__name__}: {exc}")
+                st.exception(exc)
                 st.stop()
 
-            with st.spinner("Running consensus pipeline — this may take 30-90 seconds..."):
-                try:
-                    gemini_vlm = GeminiAdapter(api_key=gemini_key, model=model)
-                    claude_vlm = ClaudeAdapter(api_key=anthropic_key, model=claude_model)
-                    judge = JudgeLLM(api_key=gemini_key, model=judge_model)
-                    vlm = ConsensusVLMAdapter(gemini_vlm, claude_vlm, judge, max_attempts=3)
+        st.subheader("Diagram analysis")
+        st.json(result.reading.to_dict())
 
-                    gemini_ext = GeminiExtractor(api_key=gemini_key, model=model)
-                    claude_ext = ClaudeExtractor(api_key=anthropic_key, model=claude_model)
-                    extractor = ConsensusExtractor(gemini_ext, claude_ext, judge, max_attempts=3)
-
-                    result = run_consensus_pipeline(
-                        image_path=image_path,
-                        problem_text=problem_text,
-                        vlm=vlm,
-                        extractor=extractor,
-                        judge=judge,
-                        lean_runner=_lean_runner(),
-                        theorem_name=example.lean_theorem_name,
-                        max_retries=max_retries,
-                    )
-                except (VLMError, FixtureNotFoundError) as exc:
-                    st.error(str(exc))
-                    st.stop()
-
-            st.subheader("Consensus VLM reading")
-            st.caption(f"Gemini: `{model}`  |  Claude: `{claude_model}`  |  Judge: `{judge_model}`")
-            st.json(result.reading.to_dict())
-
-            st.subheader("Consensus extraction")
-            st.write("**Assumptions:**")
+        st.subheader("Extracted assumptions")
+        if result.confirmed_assumptions:
             for a in result.confirmed_assumptions:
                 st.markdown(f"- `{a}`")
-            st.write(f"**Goal:** `{result.selected_goal}`")
+        else:
+            st.caption("No assumptions extracted.")
 
-            st.subheader("Lean output")
-            st.markdown(_status_badge(result.lean_status))
-            if result.lean_status in (LeanStatus.TYPE_ERROR, LeanStatus.TIMEOUT) and result.lean_stderr:
-                st.code(result.lean_stderr, language="text")
-            st.code(result.lean_source, language="lean")
-            st.download_button(
-                "Download .lean",
-                data=result.lean_source,
-                file_name=f"{example.lean_theorem_name}.lean",
-            )
-
-    reading = st.session_state.get("reading")
-    if reading is None:
-        return
-
-    st.subheader("VLM reading")
-    if st.session_state.get("vlm_model"):
-        st.caption(f"Source: {st.session_state['vlm_model']}")
-    st.json(reading.to_dict())
-
-    candidate = candidate_assumptions(reading, st.session_state.get("problem_text", ""))
-
-    st.subheader("Confirm assumptions")
-    confirmed = [a for a in candidate if st.checkbox(a, value=True, key=f"chk-{a}")]
-    extra = st.text_input("Additional assumption (optional)", key="extra-assumption")
-    if extra.strip():
-        confirmed.append(extra.strip())
-
-    if st.button("Generate Lean theorem"):
-        result = run_pipeline_from_reading(
-            reading=reading,
-            problem_text=st.session_state.get("problem_text", ""),
-            confirmed_assumptions=confirmed,
-            lean_runner=_lean_runner(),
-            theorem_name=st.session_state["example"].lean_theorem_name,
-        )
-
-        st.subheader("Goal candidates")
+        st.subheader("Goal")
         if result.goal_candidates:
-            st.write(result.goal_candidates)
-        st.write(f"**Selected:** `{result.selected_goal or '(none)'}`")
+            with st.expander("Alternative goals"):
+                st.write(result.goal_candidates)
+        st.write(f"`{result.selected_goal or '(none)'}`")
 
         st.subheader("Lean output")
         st.markdown(_status_badge(result.lean_status))
@@ -248,12 +211,12 @@ def interactive_page() -> None:
         st.download_button(
             "Download .lean",
             data=result.lean_source,
-            file_name=f"{st.session_state['example'].lean_theorem_name}.lean",
+            file_name=f"{theorem_name}.lean",
         )
 
 
 def benchmark_page() -> None:
-    st.header("Benchmark: gold-confirmed run")
+    st.header("Benchmark")
 
     examples = load_benchmark(BENCHMARK_PATH)
     adapter = FixtureAdapter(FIXTURES_DIR)
