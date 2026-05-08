@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -35,7 +36,7 @@ load_dotenv()
 
 # On Streamlit Community Cloud, secrets come from st.secrets (not env vars).
 # Mirror them into os.environ so the rest of the code stays env-var based.
-for _k in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_MODEL", "CLAUDE_MODEL", "JUDGE_MODEL", "MAX_RETRIES"):
+for _k in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_MODEL", "CLAUDE_MODEL", "JUDGE_MODEL", "MAX_RETRIES", "RATE_LIMIT_SECONDS"):
     if _k in os.environ:
         continue
     try:
@@ -55,6 +56,39 @@ DEFAULT_PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-pr
 DEFAULT_SECONDARY_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 DEFAULT_JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-3.1-flash-lite-preview")
 DEFAULT_MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "1"))
+RATE_LIMIT_SECONDS = int(os.environ.get("RATE_LIMIT_SECONDS", "600"))
+
+_last_run_by_ip: dict[str, float] = {}
+
+
+def _client_ip() -> str:
+    try:
+        headers = st.context.headers
+    except Exception:  # noqa: BLE001 — older streamlit, no request context
+        return "unknown"
+    xff = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For") or ""
+    if xff:
+        return xff.split(",")[0].strip()
+    return headers.get("host", "unknown")
+
+
+def _rate_limit_block_seconds() -> int:
+    if RATE_LIMIT_SECONDS <= 0:
+        return 0
+    last = _last_run_by_ip.get(_client_ip(), 0.0)
+    remaining = RATE_LIMIT_SECONDS - (time.time() - last)
+    return int(remaining) if remaining > 0 else 0
+
+
+def _record_run() -> None:
+    _last_run_by_ip[_client_ip()] = time.time()
+
+
+def _format_cooldown(seconds: int) -> str:
+    minutes, secs = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes} min {secs:02d} sec"
+    return f"{secs} sec"
 
 
 def _lean_runner() -> LeanRunner | None:
@@ -183,6 +217,15 @@ def interactive_page() -> None:
         st.info("Upload a diagram above to continue.")
 
     if st.button("Generate Lean theorem", type="primary", disabled=not can_run):
+        cooldown = _rate_limit_block_seconds()
+        if cooldown > 0:
+            st.warning(
+                f"Rate limit: please wait {_format_cooldown(cooldown)} before running again. "
+                f"(One run per {RATE_LIMIT_SECONDS // 60} minutes per visitor.)"
+            )
+            st.stop()
+
+        _record_run()
         with st.spinner("Generating theorem… this may take 30–60 seconds"):
             try:
                 result = _run_end_to_end(
