@@ -107,7 +107,12 @@ def _status_badge(status: LeanStatus) -> str:
     return ":orange[Type-checker unavailable]"
 
 
-def _run_end_to_end(image_path: Path, problem_text: str, theorem_name: str):
+def _run_end_to_end(
+    image_path: Path,
+    problem_text: str,
+    theorem_name: str,
+    fixture_path: Path | None = None,
+):
     """Run the full pipeline silently. Picks the strongest available backend."""
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -147,12 +152,17 @@ def _run_end_to_end(image_path: Path, problem_text: str, theorem_name: str):
             max_retries=0,
         )
 
+    if fixture_path is None:
+        raise VLMError(
+            "No API keys configured. Set GEMINI_API_KEY (and optionally "
+            "ANTHROPIC_API_KEY) in Streamlit secrets to analyze uploaded diagrams."
+        )
     reader = FixtureAdapter(FIXTURES_DIR)
-    reading = reader.read(image_path, fixture_path=None)
+    reading = reader.read(image_path, fixture_path=fixture_path)
     return run_pipeline_from_reading(
         reading=reading,
         problem_text=problem_text,
-        confirmed_assumptions=None,
+        confirmed_assumptions=[],
         lean_runner=_lean_runner(),
         theorem_name=theorem_name,
     )
@@ -175,6 +185,7 @@ def interactive_page() -> None:
     )
 
     image_path: Path | None = None
+    fixture_path: Path | None = None
     caption = ""
     default_problem_text = ""
     theorem_name = "user_theorem"
@@ -185,6 +196,8 @@ def interactive_page() -> None:
         selection = st.selectbox("Example diagram:", list(choices.keys()))
         example = choices[selection]
         image_path = REPO_ROOT / example.image
+        if example.vlm_fixture:
+            fixture_path = REPO_ROOT / example.vlm_fixture
         caption = example.id
         default_problem_text = example.problem_text
         theorem_name = example.lean_theorem_name
@@ -232,6 +245,7 @@ def interactive_page() -> None:
                     image_path=image_path,
                     problem_text=problem_text,
                     theorem_name=theorem_name,
+                    fixture_path=fixture_path,
                 )
             except (VLMError, FixtureNotFoundError) as exc:
                 st.error(str(exc))
