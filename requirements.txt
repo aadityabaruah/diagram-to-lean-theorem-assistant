@@ -1,0 +1,8 @@
+google-genai>=0.3
+anthropic>=0.34
+pillow>=10
+matplotlib>=3.8
+streamlit>=1.32
+python-dotenv>=1.0
+requests>=2.31
+-e .

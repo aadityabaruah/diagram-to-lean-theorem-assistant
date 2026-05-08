@@ -33,6 +33,17 @@ from diagram_theorem_assistant.vlm.gemini import GeminiAdapter
 
 load_dotenv()
 
+# On Streamlit Community Cloud, secrets come from st.secrets (not env vars).
+# Mirror them into os.environ so the rest of the code stays env-var based.
+for _k in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_MODEL", "CLAUDE_MODEL", "JUDGE_MODEL", "MAX_RETRIES"):
+    if _k in os.environ:
+        continue
+    try:
+        if _k in st.secrets:
+            os.environ[_k] = str(st.secrets[_k])
+    except Exception:  # noqa: BLE001 — secrets file may not exist locally
+        break
+
 REPO_ROOT = Path(__file__).resolve().parent
 BENCHMARK_PATH = REPO_ROOT / "examples" / "benchmark.json"
 FIXTURES_DIR = REPO_ROOT / "examples" / "vlm_fixtures"
